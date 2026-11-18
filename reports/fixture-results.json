@@ -1,0 +1,92 @@
+{
+  "fixture": {
+    "posts": 2000,
+    "eligible": 1925,
+    "topics": 20,
+    "regions": 8,
+    "originalViewerRegion": "o"
+  },
+  "byViewerRegion": [
+    {
+      "viewerRegion": "o",
+      "ranked": 103,
+      "first20Local": 0,
+      "first20Cross": 20,
+      "localPct": 0,
+      "tier": "widened",
+      "uniqueServed": 20
+    },
+    {
+      "viewerRegion": "north",
+      "ranked": 78,
+      "first20Local": 10,
+      "first20Cross": 10,
+      "localPct": 50,
+      "tier": "fresh",
+      "uniqueServed": 20
+    },
+    {
+      "viewerRegion": "south",
+      "ranked": 76,
+      "first20Local": 11,
+      "first20Cross": 9,
+      "localPct": 55,
+      "tier": "fresh",
+      "uniqueServed": 20
+    },
+    {
+      "viewerRegion": "east",
+      "ranked": 78,
+      "first20Local": 10,
+      "first20Cross": 10,
+      "localPct": 50,
+      "tier": "fresh",
+      "uniqueServed": 20
+    },
+    {
+      "viewerRegion": "west",
+      "ranked": 80,
+      "first20Local": 10,
+      "first20Cross": 10,
+      "localPct": 50,
+      "tier": "fresh",
+      "uniqueServed": 20
+    },
+    {
+      "viewerRegion": "central",
+      "ranked": 76,
+      "first20Local": 10,
+      "first20Cross": 10,
+      "localPct": 50,
+      "tier": "fresh",
+      "uniqueServed": 20
+    },
+    {
+      "viewerRegion": "coast",
+      "ranked": 74,
+      "first20Local": 10,
+      "first20Cross": 10,
+      "localPct": 50,
+      "tier": "fresh",
+      "uniqueServed": 20
+    },
+    {
+      "viewerRegion": "metro",
+      "ranked": 73,
+      "first20Local": 10,
+      "first20Cross": 10,
+      "localPct": 50,
+      "tier": "fresh",
+      "uniqueServed": 20
+    },
+    {
+      "viewerRegion": "mountain",
+      "ranked": 68,
+      "first20Local": 10,
+      "first20Cross": 10,
+      "localPct": 50,
+      "tier": "fresh",
+      "uniqueServed": 20
+    }
+  ]
+}

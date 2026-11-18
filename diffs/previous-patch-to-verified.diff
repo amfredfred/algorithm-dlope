@@ -1,0 +1,36 @@
+--- /mnt/data/dlope-feed-hardened/src/feed.ts	2026-11-18 13:57:25.480047148 +0000
++++ /mnt/data/dlope-algorithm-verified/src/feed.ts	2026-11-18 14:02:43.321522498 +0000
+@@ -457,9 +457,14 @@
+ 
+             if (hiddenAuthors.has(post.authorId) || hiddenPosts.has(post.id)) return "hidden";
+ 
+-            // For Me/local/explore are discovery surfaces of public Square roots only.
+-            // Private content can be shown by a different, owner-authorized profile path.
+-            if (post.visibility !== "public") return "privacy";
++            // Preserve owner-only private access from the 12:41 baseline. A private root
++            // never passes this gate for any other viewer; serving always revalidates
++            // using authoritative viewer policy and the actual requester identity.
++            if (post.visibility === "private") {
++                if (post.authorId !== viewer.id) return "privacy";
++            } else if (post.visibility !== "public") {
++                return "privacy";
++            }
+ 
+             if (post.minAge !== null && (age === null || age < post.minAge)) return "age";
+ 
+@@ -1337,10 +1342,13 @@
+     // of Square-only / removed rows can crowd out the few eligible local conversations.
+     // Production Index adapters must apply equivalent indexable predicates in their DB queries.
+     const live = posts.filter(p => validRankablePost(p) && validPostPolicy(p) &&
+-        p.moderation === "approved" && p.visibility === "public" && p.feedEligible &&
++        p.moderation === "approved" && p.feedEligible &&
+         p.createdAt <= now + cfg.futureSkewMs &&
+         (p.expiresAt === null || p.expiresAt > now));
+-    const lookup = new Map(live.map(p => [p.id, p]));
++    // Direct ID lookup is not discovery. Ineligible/historical IDs are needed for
++    // old receipts and re-show consideration, where the viewer gate runs later.
++    // Never feed the lookup cache directly into a client response.
++    const lookup = new Map(posts.filter(p => p && typeof p.id === "string").map(p => [p.id, p]));
+ 
+     const base = new Map<string, number>(
+         live.map(p => [

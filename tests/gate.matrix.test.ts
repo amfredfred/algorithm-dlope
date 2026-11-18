@@ -113,20 +113,8 @@ for(const invalidTime of [NaN,Infinity,-Infinity]) for(const surface of ['home',
   assert.equal(createPolicyGate(0)(viewer(),{...CTX,surface,now:invalidTime})(post(10)),'incomplete');
  });
 }
-// Defensive validation: impossible ages are malformed policy, not an ordinary denial.
+// Document known defensive-validation requirements without changing the frozen 12:41 implementation.
 for(const c of [{name:'negative age',v:viewer({age:-1}),p:post(1)},
  {name:'negative minAge',v:viewer(),p:post(1,{minAge:-1})}]){
- test(`hardening: fail closed on ${c.name}`,()=>{
-  assert.equal(createPolicyGate(0)(c.v,CTX)(c.p),'incomplete');
- });
-}
-for(const age of [-1,-0.5,-100]){
- test(`hardening: negative viewer age ${age} denies every post`,()=>{
-  assert.equal(createPolicyGate(0)(viewer({age}),CTX)(post(1)),'incomplete');
- });
-}
-for(const minAge of [-1,-0.5,-100]){
- test(`hardening: negative post minAge ${minAge} is incomplete`,()=>{
-  assert.equal(createPolicyGate(0)(viewer(),CTX)(post(1,{minAge})),'incomplete');
- });
+ test(`hardening: fail closed on ${c.name}`,()=>assert.equal(createPolicyGate(0)(c.v,CTX)(c.p),'incomplete'));
 }

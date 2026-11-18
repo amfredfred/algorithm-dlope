@@ -1,0 +1,21 @@
+{
+  "node": "v22.16.0",
+  "typescript": "5.8.3",
+  "counts": {
+    "tests": 4570,
+    "pass": 4568,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0,
+    "todo": 2
+  },
+  "todo_cases": [
+    "session order never delivers the same post twice through concurrent independent sessions after a qualified view",
+    "fraud-qualification pipeline rejects fabricated dwell telemetry before quality aggregation"
+  ],
+  "components": {
+    "legacy_1241_registered": 4508,
+    "hardened_tests_registered": 62
+  },
+  "original_fixture_posts": 2000
+}

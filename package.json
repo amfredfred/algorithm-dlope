@@ -1,15 +1,20 @@
 {
-  "name": "dlope-feed-1241-regression-suite",
-  "version": "1.0.0",
+  "name": "dlope-feed-verified-regressions",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "scripts": {
+    "start": "npm run build && node dist/src/feed.js",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "start": "npm run build && node dist/src/index.js",
     "build": "tsc -p tsconfig.json",
-    "test": "npm run build && node --test dist/tests/*.test.js --test-reporter=spec",
-    "test:verbose": "npm run build && node --test dist/tests/*.test.js --test-reporter=spec",
-    "test:tap": "npm run build && node --test dist/tests/*.test.js --test-reporter=tap"
+    "test": "npm run build && node scripts/run-tests.mjs",
+    "test:spec": "npm run build && node --test --test-reporter=spec dist/tests/*.test.js test/*.test.mjs",
+    "test:tap": "npm run build && node --test --test-reporter=tap dist/tests/*.test.js test/*.test.mjs",
+    "benchmark": "npm run build && node scripts/benchmark.mjs",
+    "fixture:report": "npm run build && node scripts/library-fixture-report.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

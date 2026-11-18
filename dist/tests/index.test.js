@@ -198,25 +198,26 @@ test("view budget: two racing report calls cannot overspend", async () => {
             assert.ok(x.reason instanceof StoreConflict);
     assert.ok((await r.store.viewSpent(s.id)) <= 12_000);
 });
-test("a second receipt for an already-claimed post earns no second exposure bump", async () => {
+test("the store rejects an out-of-order duplicate serve and preserves the original claim", async () => {
     const r = rig(many(30));
     const { s, page } = await served(r, 3);
     const p = page[0];
-    // A second serve of the same post inside the session (e.g. a reshown page), as the store sees it.
     const cur = (await r.store.load(s.id));
-    await r.store.recordServes(s.id, {
+    // Regression: the old test inserted an extra receipt without advancing the
+    // session cursor. That is an invalid transition, not a legitimate re-show.
+    await assert.rejects(() => r.store.recordServes(s.id, {
         viewerId: r.v.id,
         expected: { refresh: cur.refresh, cursor: cur.cursor, rev: cur.rev },
         cursor: cur.cursor,
         serves: [{ serveId: "dup-serve", postId: p.post.id, version: p.post.version, servedAt: NOW }],
-    });
+    }), RangeError);
     const a = await recordViews(r.deps, s, r.v, [ev(p, 2000)], NOW + 5000);
-    const b = await recordViews(r.deps, s, r.v, [{ serveId: "dup-serve", visibleMs: 2000, visibleFraction: 1 }], NOW + 6000);
+    const b = await recordViews(r.deps, s, r.v, [ev(p, 2000)], NOW + 6000);
     assert.deepEqual(a.accepted, [p.post.id]);
     assert.deepEqual(b.accepted, []);
     assert.equal(b.rejected.duplicate, 1);
     assert.equal((await r.store.exposures(r.v.id))[p.post.id].count, 1);
-    assert.deepEqual(r.store.claimLog().map(c => c.outcome), ["qualified_claim", "duplicate"]);
+    assert.deepEqual(r.store.claimLog().map(c => c.outcome), ["qualified_claim"]);
 });
 // ---------- local share ----------
 const skewed = () => [

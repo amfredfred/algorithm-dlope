@@ -147,30 +147,37 @@ test('exposure accumulation is viewer-specific', async () => {
     assert.ok((await r.store.exposures(r.viewer.id))[one.post.id]);
     assert.deepEqual(await r.store.exposures('other-viewer'), {});
 });
-// Contract coverage for retry and timestamp hardening.
+// Contract coverage for still-unimplemented retry and trust controls.
 test('concurrent conflicting client view reports automatically retry with bounded backoff', async () => {
     const r = rig(posts(20));
     const s = await openSession(r.deps, r.viewer, CTX, { seed: 1 });
-    const page = await nextPage(r.deps, s, r.viewer, CTX, 2);
-    const original = r.store.commitViews.bind(r.store);
-    let attempts = 0;
-    r.store.commitViews = async (a) => {
-        attempts++;
-        if (attempts === 1)
-            throw new StoreConflict('simulated race');
-        return original(a);
+    const [item] = await nextPage(r.deps, s, r.viewer, CTX, 1);
+    let calls = 0;
+    const realCommit = r.deps.store.commitViews.bind(r.deps.store);
+    r.deps.store.commitViews = async (a) => {
+        calls++;
+        if (calls === 1)
+            throw new StoreConflict('simulated concurrent budget update');
+        return realCommit(a);
     };
-    const res = await recordViews(r.deps, s, r.viewer, page.map(p => ({ serveId: p.serveId, visibleMs: 1000, visibleFraction: 1 })), NOW + 10_000);
-    assert.equal(attempts, 2);
-    assert.equal(res.accepted.length, 2);
-});
-test('receipt timestamps from the future cannot be redeemed before their serve time', async () => {
-    const r = rig(posts(20));
-    const s = await openSession(r.deps, r.viewer, CTX, { seed: 1 });
-    const page = await nextPage(r.deps, s, r.viewer, CTX, 1);
-    const res = await recordViews(r.deps, s, r.viewer, [{ serveId: page[0].serveId, visibleMs: 1000, visibleFraction: 1 }], NOW - 1);
-    assert.equal(res.accepted.length, 0);
-    assert.equal(res.rejected.implausible, 1);
-    assert.equal(r.store.claimLog().at(-1)?.outcome, 'implausible');
+    const result = await recordViews(r.deps, s, r.viewer, [{ serveId: item.serveId, visibleMs: 1000, visibleFraction: 1 }], NOW + 3000);
+    assert.equal(result.accepted.length, 1);
+    assert.equal(calls, 2);
+    const r2 = rig(posts(10));
+    const s2 = await openSession(r2.deps, r2.viewer, CTX, { seed: 3 });
+    const [second] = await nextPage(r2.deps, s2, r2.viewer, CTX, 1);
+    let attempts = 0;
+    r2.deps.store.commitViews = async () => { attempts++; throw new StoreConflict('permanent CAS conflict'); };
+    await assert.rejects(recordViews(r2.deps, s2, r2.viewer, [{ serveId: second.serveId, visibleMs: 1000, visibleFraction: 1 }], NOW + 3000), StoreConflict);
+    assert.equal(attempts, 3, 'retry policy must have a bounded attempt count');
 });
 test.todo('fraud-qualification pipeline rejects fabricated dwell telemetry before quality aggregation');
+test('receipt timestamps from the future cannot be redeemed before their serve time', async () => {
+    const r = rig(posts(30));
+    const s = await openSession(r.deps, r.viewer, CTX, { seed: 1 });
+    const [item] = await nextPage(r.deps, s, r.viewer, { ...CTX, now: NOW + 6000 }, 1);
+    const result = await recordViews(r.deps, s, r.viewer, [{ serveId: item.serveId, visibleMs: 1000, visibleFraction: 1 }], NOW + 1000);
+    assert.equal(result.accepted.length, 0);
+    assert.equal(result.rejected.implausible, 1);
+    assert.deepEqual(await r.store.exposures(r.viewer.id), {});
+});

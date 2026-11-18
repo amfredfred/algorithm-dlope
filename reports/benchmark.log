@@ -1,0 +1,47 @@
+
+> dlope-feed-verified-regressions@2.0.0 benchmark
+> npm run build && node scripts/benchmark.mjs
+
+
+> dlope-feed-verified-regressions@2.0.0 build
+> tsc -p tsconfig.json
+
+{
+  "environment": {
+    "runtime": "v22.16.0",
+    "store": "in-memory reference",
+    "samplesPerSize": 20
+  },
+  "results": [
+    {
+      "posts": 2000,
+      "indicesMs": 55.28,
+      "openP50Ms": 3.58,
+      "openP95Ms": 8.46,
+      "pageP50Ms": 0.29,
+      "pageP95Ms": 0.47,
+      "localServed": 295,
+      "remoteServed": 105
+    },
+    {
+      "posts": 10000,
+      "indicesMs": 59.74,
+      "openP50Ms": 6.74,
+      "openP95Ms": 10.25,
+      "pageP50Ms": 0.29,
+      "pageP95Ms": 0.66,
+      "localServed": 285,
+      "remoteServed": 115
+    },
+    {
+      "posts": 30000,
+      "indicesMs": 209.74,
+      "openP50Ms": 18.14,
+      "openP95Ms": 25.55,
+      "pageP50Ms": 0.34,
+      "pageP95Ms": 0.48,
+      "localServed": 259,
+      "remoteServed": 141
+    }
+  ]
+}

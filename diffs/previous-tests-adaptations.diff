@@ -1,0 +1,34 @@
+--- /mnt/data/dlope-feed-hardened/test/feed.test.mjs	2026-11-18 13:44:06.260694330 +0000
++++ /mnt/data/dlope-algorithm-verified/test/feed.test.mjs	2026-11-18 14:02:20.708816645 +0000
+@@ -5,7 +5,7 @@
+  openSession, nextPage, recordViews, advanceSession, refreshSession, invalidateRankings,
+  rebuildTail, rankDlopeFeed, diversify, diversifyWithLocalQuota, withLocalShare, buildRanking,
+  StoreConflict, SessionAccessError, mulberry32
+-} from '../dist/feed.js';
++} from '../dist/src/feed.js';
+ 
+ const NOW = 1795000000000; // deterministic server clock
+ const CTX = {now: NOW, surface:'home'};
+@@ -40,8 +40,9 @@
+  }
+  assert.equal(createPolicyGate(60000)(viewer({hiddenPosts:['a']}),CTX)(post('a')),'hidden');
+ });
+-test('gate filters private content even when requester is author',()=>{
+- assert.equal(createPolicyGate(60000)(viewer({id:'user-a'}),CTX)(post('a',{visibility:'private'})),'privacy');
++test('gate allows own private posts but hides them from other viewers',()=>{
++ assert.equal(createPolicyGate(60000)(viewer({id:'user-a'}),CTX)(post('a',{visibility:'private'})),'ok');
++ assert.equal(createPolicyGate(60000)(viewer({id:'viewer-1'}),CTX)(post('a',{visibility:'private'})),'privacy');
+ });
+ test('gate filters expiration and future publication',()=>{
+  const gate=createPolicyGate(60000)(viewer(),CTX);
+--- /mnt/data/dlope-feed-hardened/test/library-fixture.test.mjs	2026-11-18 13:41:24.247053049 +0000
++++ /mnt/data/dlope-algorithm-verified/test/library-fixture.test.mjs	2026-11-18 14:00:37.465046179 +0000
+@@ -1,7 +1,7 @@
+ import test from 'node:test';
+ import assert from 'node:assert/strict';
+ import {readFileSync} from 'node:fs';
+-import {EXPERIMENTAL_CONFIG as BASE,buildIndex,buildAuthority,MemoryStore,createPolicyGate,openSession,nextPage} from '../dist/feed.js';
++import {EXPERIMENTAL_CONFIG as BASE,buildIndex,buildAuthority,MemoryStore,createPolicyGate,openSession,nextPage} from '../dist/src/feed.js';
+ const data=JSON.parse(readFileSync(new URL('../fixtures/dummies.json',import.meta.url),'utf8'));
+ const now=data.now,cfg=structuredClone(BASE);
+ const posts=data.posts.map(p=>({id:p.id,authorId:p.authorId,regionId:p.regionId,topics:p.topics,

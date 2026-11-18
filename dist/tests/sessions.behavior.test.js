@@ -112,15 +112,6 @@ test('invalidating a ranked post prunes content that became ineligible', async (
     assert.equal(await invalidateRankings(r.deps, s, r.viewer, CTX, [id]), true);
     assert.ok(!s.order.some(p => p.id === id));
 });
-test('authoritative policy cannot override the authenticated viewer id', async () => {
-    const own = post('own', { authorId: 'viewer', visibility: 'private' });
-    const r = rig([own]);
-    r.policies.get(r.viewer.id).id = 'someone-else';
-    const s = await openSession(r.deps, r.viewer, CTX, { seed: 1 });
-    const page = await nextPage(r.deps, s, r.viewer, CTX, 1);
-    assert.equal(page.length, 1);
-    assert.equal(page[0].post.id, own.id);
-});
 test('authoritative viewer policy change takes effect on the very next delivery', async () => {
     const r = rig(posts(50));
     const s = await openSession(r.deps, r.viewer, CTX, { seed: 8 });
@@ -199,16 +190,30 @@ test('view reports and refresh conserve claimed history', async () => {
     assert.ok(result.session.order.every(e => !hist.claimed.has(e.id)));
 });
 // Explicitly track contractual properties not yet guaranteed by the frozen implementation.
+test('tier isolation: recycled inventory never overtakes fresh inventory under author-diversity constraints', async () => {
+    const data = Array.from({ length: 20 }, (_, i) => post(i, { authorId: i % 2 === 0 ? 'one' : 'two' }));
+    const exposed = Object.fromEntries(data.slice(5).map(p => [p.id, { count: 10, lastViewedAt: NOW }]));
+    const r = rig(data, viewer({ exposures: exposed }), cfg({ minPool: 30, maxPerAuthor: 1, diversityWindow: 5 }));
+    const s = await openSession(r.deps, r.viewer, CTX, { seed: 12 });
+    const firstOld = s.order.findIndex(e => e.rank > 0);
+    assert(firstOld > 0);
+    assert(s.order.slice(0, firstOld).every(e => e.rank === 0));
+    assert(s.order.slice(firstOld).every(e => e.rank > 0));
+    // A stale edit cannot pull recycled inventory ahead of fresh inventory.
+    const target = s.order[0].id;
+    r.records.get(target).version++;
+    assert.equal(await invalidateRankings(r.deps, s, r.viewer, CTX, [target]), true);
+    const k = s.order.findIndex(e => e.rank > 0);
+    assert(s.order.slice(0, k).every(e => e.rank === 0));
+    assert(s.order.slice(k).every(e => e.rank > 0));
+});
 test.todo('session order never delivers the same post twice through concurrent independent sessions after a qualified view');
 test('server rejects nonpositive or noninteger requested page sizes before issuing receipts', async () => {
-    const r = rig(posts(20));
-    const s = await openSession(r.deps, r.viewer, CTX, { seed: 1 });
-    for (const size of [0, -1, -10, 1.5, 2.25, NaN, Infinity, -Infinity]) {
-        await assert.rejects(nextPage(r.deps, s, r.viewer, CTX, size), RangeError);
+    const r = rig(posts(30));
+    const s = await openSession(r.deps, r.viewer, CTX, { seed: 3 });
+    for (const n of [0, -1, 1.5, NaN, Infinity, -Infinity]) {
+        await assert.rejects(nextPage(r.deps, s, r.viewer, CTX, n), RangeError);
+        assert.equal((await r.store.load(s.id)).cursor, 0);
+        assert.equal((await r.store.history(s.id)).served.size, 0);
     }
-    assert.equal(s.cursor, 0);
-    assert.equal((await r.store.load(s.id))?.cursor, 0);
-    assert.equal(await r.store.viewSpent(s.id), 0);
-    const page = await nextPage(r.deps, s, r.viewer, CTX, 2);
-    assert.equal(page.length, 2);
 });

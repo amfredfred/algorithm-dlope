@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {
- buildIndex, buildRanking, nextPage, openSession, rankDlopeFeed, rebuildTail,
+ buildIndex, buildRanking, nextPage, openSession, rankDlopeFeed,
  type Post, type Index, type Context,
 } from '../src/index.js';
 import {NOW,CTX,H,cfg,post,posts,rig,seeded,viewer} from './helpers.js';
@@ -84,7 +84,8 @@ for (const surface of ['home','local','explore'] as const)for(const seed of [0,1
 }
 test('indices are only candidates; authoritative content is returned at delivery, never stale index values',async()=>{
  const r=rig(posts(40));const s=await openSession(r.deps,r.viewer,CTX,{seed:1});
- const changed=s.order[0].id;r.records.get(changed)!.satisfied=999;
+ const changed=s.order[0].id;r.records.get(changed)!.impressions=1000;
+ r.records.get(changed)!.satisfied=999;
  r.records.get(changed)!.version=3;
  const page=await nextPage(r.deps,s,r.viewer,CTX,1);
  assert.equal(page[0].post.satisfied,999);
@@ -152,46 +153,38 @@ for(const n of [100,500,1000,5000]){
  });
 }
 // Outside the 12:41 implementation, but essential production expectations.
-test.todo('sparse-region retrieval stops widening when the local bucket is definitively exhausted');
-test.todo('local share quota is met under per-author diversity when a feasible alternative exists');
-
-for(const window of [2,3,5,10]){
- test(`tier isolation: recycled content never overtakes fresh content window=${window}`,async()=>{
-  const data=[
-   post('f1',{authorId:'fresh-author',topics:['a']}),
-   post('f2',{authorId:'fresh-author',topics:['a']}),
-   post('f3',{authorId:'fresh-author',topics:['a']}),
-   post('r1',{authorId:'recycled-author',topics:['a']}),
-  ];
-  const v=viewer({exposures:{'p-r1':{count:1,lastViewedAt:NOW-H}}});
-  const r=rig(data,v,cfg({minPool:4,minLocalPool:0,maxPerAuthor:2,diversityWindow:window,
-   localShare:{home:0,local:0,explore:0}}));
-  const s=await openSession(r.deps,v,CTX,{seed:1});
-  const fresh=new Set(['p-f1','p-f2','p-f3']), recycled=new Set(['p-r1']);
-  const freshPositions=s.order.flatMap((e,i)=>fresh.has(e.id)?[i]:[]);
-  const recycledPositions=s.order.flatMap((e,i)=>recycled.has(e.id)?[i]:[]);
-  assert.equal(freshPositions.length,3);
-  assert.equal(recycledPositions.length,1);
-  assert.ok(Math.max(...freshPositions)<Math.min(...recycledPositions));
-  assert.equal(s.tier,'recycled');
- });
-}
-
-test('rebuildTail also keeps recycled entries behind the fresh tail',async()=>{
- const data=[
-  post('f1',{authorId:'fresh-author',topics:['a']}),
-  post('f2',{authorId:'fresh-author',topics:['a']}),
-  post('f3',{authorId:'fresh-author',topics:['a']}),
-  post('r1',{authorId:'recycled-author',topics:['a']}),
- ];
- const v=viewer({exposures:{'p-r1':{count:1,lastViewedAt:NOW-H}}});
- const r=rig(data,v,cfg({minPool:4,minLocalPool:0,maxPerAuthor:2,diversityWindow:10,
-  localShare:{home:0,local:0,explore:0}}));
- const s=await openSession(r.deps,v,CTX,{seed:1});
- await nextPage(r.deps,s,v,CTX,1);
- assert.equal(await rebuildTail(r.deps,s,v,CTX),true);
- const tail=s.order.slice(s.cursor);
- const freshPositions=tail.flatMap((e,i)=>e.id.startsWith('p-f')?[i]:[]);
- const recycledPositions=tail.flatMap((e,i)=>e.id==='p-r1'?[i]:[]);
- assert.ok(Math.max(...freshPositions)<Math.min(...recycledPositions));
+test('sparse-region retrieval stops widening when the local bucket is definitively exhausted',async()=>{
+ const callLimits:number[]=[];
+ const data=[post('only-local'),...Array.from({length:150},(_,i)=>post(`foreign-${i}`,{regionId:'other'}))];
+ const r=rig(data,viewer(),cfg({minPool:250,minLocalPool:10}),index=>({
+  ...index,
+  region:async(region,n,scope)=>{callLimits.push(n);return index.region(region,n,scope);}
+ }));
+ const s=await openSession(r.deps,r.viewer,CTX,{seed:7});
+ assert.equal(callLimits.length,1,'exhausted local bucket must not be queried twice');
+ assert(s.order.some(e=>e.id==='p-only-local'));
+ assert(s.order.some(e=>e.id==='p-foreign-0'));
+});
+test('fresh tier cannot be reordered behind recycled tier by the global diversity step',async()=>{
+ const data=Array.from({length:9},(_,i)=>post(i,{authorId:i<3?'shared-author':`author-${i}`}));
+ const exposed=Object.fromEntries(data.slice(3).map(p=>[p.id,{count:100,lastViewedAt:NOW}]));
+ const r=rig(data,viewer({exposures:exposed}),cfg({minPool:50}));
+ const s=await openSession(r.deps,r.viewer,CTX,{seed:9});
+ assert(s.order.some(e=>e.rank===0)); assert(s.order.some(e=>e.rank>0));
+ const firstOld=s.order.findIndex(e=>e.rank>0);
+ assert(s.order.slice(0,firstOld).every(e=>e.rank===0));
+ assert(s.order.slice(firstOld).every(e=>e.rank>0));
+});
+test('local share quota is met under per-author diversity when a feasible alternative exists',()=>{
+ const data=Array.from({length:100},(_,i)=>post(i,{
+  regionId:i<35?'local':'elsewhere',authorId:`distinct-${i}`,
+  impressions:i<35?1000:10,satisfied:i<35?2:9
+ }));
+ const c=cfg({localShare:{home:.6,local:.6,explore:.6},maxPerAuthor:1,diversityWindow:8});
+ const r=rig(data,viewer(),c);
+ const ordered=rankDlopeFeed(data,r.viewer,CTX,r.deps);
+ for(let n=1;n<=35;n++){
+  const local=ordered.slice(0,n).filter(p=>p.regionId==='local').length;
+  assert(local>=Math.floor(.6*n),`prefix ${n} has ${local} locals`);
+ }
 });
