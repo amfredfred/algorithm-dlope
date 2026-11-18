@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
  advanceSession, buildRanking, invalidateRankings, loadSession, nextPage, openSession,
  rebuildTail, recordViews, refreshSession, SessionAccessError, StoreConflict, MemoryStore,
- type Served, type Viewer,
+ type Served, type Viewer, type ViewerPolicy,
 } from '../src/index.js';
 import {CTX,NOW,H,cfg,post,posts,rig,viewer} from './helpers.js';
 
@@ -102,6 +102,15 @@ test('invalidating a ranked post prunes content that became ineligible',async()=
  assert.equal(await invalidateRankings(r.deps,s,r.viewer,CTX,[id]),true);
  assert.ok(!s.order.some(p=>p.id===id));
 });
+test('authoritative policy cannot override the authenticated viewer id',async()=>{
+ const own=post('own',{authorId:'viewer',visibility:'private'});
+ const r=rig([own]);
+ (r.policies.get(r.viewer.id) as ViewerPolicy & {id:string}).id='someone-else';
+ const s=await openSession(r.deps,r.viewer,CTX,{seed:1});
+ const page=await nextPage(r.deps,s,r.viewer,CTX,1);
+ assert.equal(page.length,1);
+ assert.equal(page[0].post.id,own.id);
+});
 test('authoritative viewer policy change takes effect on the very next delivery',async()=>{
  const r=rig(posts(50));const s=await openSession(r.deps,r.viewer,CTX,{seed:8});
  const chosen=s.order[0].id;
@@ -162,6 +171,16 @@ test('view reports and refresh conserve claimed history',async()=>{
  assert.ok(result.session.order.every(e=>!hist.claimed.has(e.id)));
 });
 // Explicitly track contractual properties not yet guaranteed by the frozen implementation.
-test.todo('tier isolation: recycled inventory never overtakes fresh inventory under author-diversity constraints');
 test.todo('session order never delivers the same post twice through concurrent independent sessions after a qualified view');
-test.todo('server rejects nonpositive or noninteger requested page sizes before issuing receipts');
+
+test('server rejects nonpositive or noninteger requested page sizes before issuing receipts',async()=>{
+ const r=rig(posts(20));const s=await openSession(r.deps,r.viewer,CTX,{seed:1});
+ for(const size of [0,-1,-10,1.5,2.25,NaN,Infinity,-Infinity]){
+   await assert.rejects(nextPage(r.deps,s,r.viewer,CTX,size),RangeError);
+ }
+ assert.equal(s.cursor,0);
+ assert.equal((await r.store.load(s.id))?.cursor,0);
+ assert.equal(await r.store.viewSpent(s.id),0);
+ const page=await nextPage(r.deps,s,r.viewer,CTX,2);
+ assert.equal(page.length,2);
+});

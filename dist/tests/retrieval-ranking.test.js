@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildIndex, nextPage, openSession, rankDlopeFeed, } from '../src/index.js';
+import { buildIndex, nextPage, openSession, rankDlopeFeed, rebuildTail, } from '../src/index.js';
 import { NOW, CTX, H, cfg, post, posts, rig, seeded, viewer } from './helpers.js';
 for (const seed of [1, 2, 3, 4, 10, 11, 22, 33, 44, 55, 99, 101, 202, 303, 404, 505])
     for (const limit of [0, 1, 3, 5, 10, 20, 50, 100]) {
@@ -163,5 +163,43 @@ for (const n of [100, 500, 1000, 5000]) {
 }
 // Outside the 12:41 implementation, but essential production expectations.
 test.todo('sparse-region retrieval stops widening when the local bucket is definitively exhausted');
-test.todo('fresh tier cannot be reordered behind recycled tier by the global diversity step');
 test.todo('local share quota is met under per-author diversity when a feasible alternative exists');
+for (const window of [2, 3, 5, 10]) {
+    test(`tier isolation: recycled content never overtakes fresh content window=${window}`, async () => {
+        const data = [
+            post('f1', { authorId: 'fresh-author', topics: ['a'] }),
+            post('f2', { authorId: 'fresh-author', topics: ['a'] }),
+            post('f3', { authorId: 'fresh-author', topics: ['a'] }),
+            post('r1', { authorId: 'recycled-author', topics: ['a'] }),
+        ];
+        const v = viewer({ exposures: { 'p-r1': { count: 1, lastViewedAt: NOW - H } } });
+        const r = rig(data, v, cfg({ minPool: 4, minLocalPool: 0, maxPerAuthor: 2, diversityWindow: window,
+            localShare: { home: 0, local: 0, explore: 0 } }));
+        const s = await openSession(r.deps, v, CTX, { seed: 1 });
+        const fresh = new Set(['p-f1', 'p-f2', 'p-f3']), recycled = new Set(['p-r1']);
+        const freshPositions = s.order.flatMap((e, i) => fresh.has(e.id) ? [i] : []);
+        const recycledPositions = s.order.flatMap((e, i) => recycled.has(e.id) ? [i] : []);
+        assert.equal(freshPositions.length, 3);
+        assert.equal(recycledPositions.length, 1);
+        assert.ok(Math.max(...freshPositions) < Math.min(...recycledPositions));
+        assert.equal(s.tier, 'recycled');
+    });
+}
+test('rebuildTail also keeps recycled entries behind the fresh tail', async () => {
+    const data = [
+        post('f1', { authorId: 'fresh-author', topics: ['a'] }),
+        post('f2', { authorId: 'fresh-author', topics: ['a'] }),
+        post('f3', { authorId: 'fresh-author', topics: ['a'] }),
+        post('r1', { authorId: 'recycled-author', topics: ['a'] }),
+    ];
+    const v = viewer({ exposures: { 'p-r1': { count: 1, lastViewedAt: NOW - H } } });
+    const r = rig(data, v, cfg({ minPool: 4, minLocalPool: 0, maxPerAuthor: 2, diversityWindow: 10,
+        localShare: { home: 0, local: 0, explore: 0 } }));
+    const s = await openSession(r.deps, v, CTX, { seed: 1 });
+    await nextPage(r.deps, s, v, CTX, 1);
+    assert.equal(await rebuildTail(r.deps, s, v, CTX), true);
+    const tail = s.order.slice(s.cursor);
+    const freshPositions = tail.flatMap((e, i) => e.id.startsWith('p-f') ? [i] : []);
+    const recycledPositions = tail.flatMap((e, i) => e.id === 'p-r1' ? [i] : []);
+    assert.ok(Math.max(...freshPositions) < Math.min(...recycledPositions));
+});

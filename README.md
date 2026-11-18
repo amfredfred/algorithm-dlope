@@ -1,8 +1,15 @@
 # Dlope feed — 12:41 baseline regression tests
 
-A broad, **4,508-case** regression suite for the **12:41 ranking algorithm**, not the later 13:05 or 13:14 rewrites.
+A broad, **4,518-case** regression suite for the **12:41 ranking algorithm**, not the later 13:05 or 13:14 rewrites.
 
-The `src/index.ts` implementation is an **unchanged, byte-identical copy** of `dlope-feed-1241-typefixed.ts` (SHA-256: `9b39237107b46932a6809a2da53cc091f666beff747ca26ac0f84ef6673df19e`). Its configuration has not been tuned or modified for these tests.
+The `src/index.ts` implementation starts from the type-corrected 12:41 algorithm and includes a small hardening patch. Ranking weights and configuration values are unchanged:
+
+- reject negative viewer ages and negative post minimum ages as incomplete;
+- validate page sizes before issuing receipts;
+- reject receipt reports timestamped before the serve;
+- retry view commits a bounded number of times after a store conflict;
+- keep fresh, recycled and reshown tiers isolated when author diversity reranks them;
+- ensure authoritative viewer policy cannot override the authenticated viewer id.
 
 ## Run
 

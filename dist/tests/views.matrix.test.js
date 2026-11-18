@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { MemoryStore, nextPage, openSession, recordViews } from '../src/index.js';
+import { MemoryStore, StoreConflict, nextPage, openSession, recordViews } from '../src/index.js';
 import { CTX, NOW, H, cfg, posts, rig, viewer } from './helpers.js';
 const dwell = [-1, 0, 100, 999, 1000, 1001, 1500, 2000, 5000, 10000, 10001, 12000, 15000, NaN, Infinity, -Infinity];
 const visible = [-0.1, 0, 0.1, 0.49, 0.5, 0.51, 0.75, 0.99, 1, 1.01, NaN, Infinity, -Infinity];
@@ -147,7 +147,30 @@ test('exposure accumulation is viewer-specific', async () => {
     assert.ok((await r.store.exposures(r.viewer.id))[one.post.id]);
     assert.deepEqual(await r.store.exposures('other-viewer'), {});
 });
-// Contract coverage for still-unimplemented retry and trust controls.
-test.todo('concurrent conflicting client view reports automatically retry with bounded backoff');
+// Contract coverage for retry and timestamp hardening.
+test('concurrent conflicting client view reports automatically retry with bounded backoff', async () => {
+    const r = rig(posts(20));
+    const s = await openSession(r.deps, r.viewer, CTX, { seed: 1 });
+    const page = await nextPage(r.deps, s, r.viewer, CTX, 2);
+    const original = r.store.commitViews.bind(r.store);
+    let attempts = 0;
+    r.store.commitViews = async (a) => {
+        attempts++;
+        if (attempts === 1)
+            throw new StoreConflict('simulated race');
+        return original(a);
+    };
+    const res = await recordViews(r.deps, s, r.viewer, page.map(p => ({ serveId: p.serveId, visibleMs: 1000, visibleFraction: 1 })), NOW + 10_000);
+    assert.equal(attempts, 2);
+    assert.equal(res.accepted.length, 2);
+});
+test('receipt timestamps from the future cannot be redeemed before their serve time', async () => {
+    const r = rig(posts(20));
+    const s = await openSession(r.deps, r.viewer, CTX, { seed: 1 });
+    const page = await nextPage(r.deps, s, r.viewer, CTX, 1);
+    const res = await recordViews(r.deps, s, r.viewer, [{ serveId: page[0].serveId, visibleMs: 1000, visibleFraction: 1 }], NOW - 1);
+    assert.equal(res.accepted.length, 0);
+    assert.equal(res.rejected.implausible, 1);
+    assert.equal(r.store.claimLog().at(-1)?.outcome, 'implausible');
+});
 test.todo('fraud-qualification pipeline rejects fabricated dwell telemetry before quality aggregation');
-test.todo('receipt timestamps from the future cannot be redeemed before their serve time');

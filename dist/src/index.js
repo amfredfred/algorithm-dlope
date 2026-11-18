@@ -83,7 +83,7 @@ export function createPolicyGate(futureSkewMs) {
             Array.isArray(viewer.blockedBy) &&
             Array.isArray(viewer.hiddenAuthors) &&
             Array.isArray(viewer.hiddenPosts) &&
-            (age === null || (typeof age === "number" && Number.isFinite(age))) &&
+            (age === null || (typeof age === "number" && Number.isFinite(age) && age >= 0)) &&
             Number.isFinite(ctx.now);
         if (!complete)
             return () => "incomplete";
@@ -107,7 +107,8 @@ export function createPolicyGate(futureSkewMs) {
             if (post.expiresAt === undefined || (post.expiresAt !== null && !Number.isFinite(post.expiresAt))) {
                 return "incomplete";
             }
-            if (post.minAge === undefined || (post.minAge !== null && !Number.isFinite(post.minAge))) {
+            if (post.minAge === undefined ||
+                (post.minAge !== null && (!Number.isFinite(post.minAge) || post.minAge < 0))) {
                 return "incomplete";
             }
             const g = post.geo;
@@ -273,6 +274,25 @@ export function diversify(ordered, max, window, prior = []) {
     }
     return { order: out, relaxedFrom };
 }
+// Diversifies each tier independently so a later tier can never jump ahead of an earlier one.
+// The author window continues across tier seams, and the first relaxed position is reported
+// against the concatenated order.
+function diversifyTiers(tiers, cfg, prior = []) {
+    const out = [];
+    const authors = prior.slice();
+    let relaxedFrom = null;
+    for (const tier of tiers) {
+        if (!tier.length)
+            continue;
+        const d = diversify(tier, cfg.maxPerAuthor, cfg.diversityWindow, authors);
+        if (relaxedFrom === null && d.relaxedFrom !== null) {
+            relaxedFrom = out.length + d.relaxedFrom;
+        }
+        out.push(...d.order);
+        authors.push(...d.order.map(p => p.authorId));
+    }
+    return { order: out, relaxedFrom };
+}
 // ---------- local share ----------
 // Scores decide who ranks high, but a score can never promise a viewer's own region a place:
 // strong posts from elsewhere can outrank every local one. This makes the preference explicit.
@@ -424,20 +444,24 @@ export async function buildRanking(deps, viewer, ctx, id, seed, refresh) {
     }
     const rank = new Map(pool.map(p => [p.id, 0]));
     const rng = mulberry32(seed * 1000 + refresh);
-    let ordered = withLocalShare(orderSample(pool, viewer, ctx, cfg, rng, () => 0), viewer.regionId, cfg.localShare[ctx.surface]);
+    const fresh = withLocalShare(orderSample(pool, viewer, ctx, cfg, rng, () => 0), viewer.regionId, cfg.localShare[ctx.surface]);
+    const tiers = [fresh];
+    let size = fresh.length;
     // Viewer history above the block threshold, not yet served this session.
-    if (ordered.length < cfg.minPool) {
+    if (size < cfg.minPool) {
         const ids = Object.keys(viewer.exposures).filter(pid => !served.has(pid) && exposureOf(viewer, pid, ctx.now, cfg) >= cfg.seenBlock);
         const history = admissible(await index.byIds(ids), allow);
         if (history.length) {
             for (const p of history)
                 rank.set(p.id, 1 + Math.floor(exposure(p)));
-            ordered = ordered.concat(orderSample(history, viewer, ctx, cfg, rng, p => Math.floor(exposure(p))));
+            const sampled = orderSample(history, viewer, ctx, cfg, rng, p => Math.floor(exposure(p)));
+            tiers.push(sampled);
+            size += sampled.length;
             tier = "recycled";
         }
     }
     // Served this session but never claimed as viewed, capped per post.
-    if (ordered.length < cfg.minPool) {
+    if (size < cfg.minPool) {
         const ids = [...served]
             .filter(([pid, s]) => !claimed.has(pid) && s.count < cfg.maxServesPerSession)
             .map(([pid]) => pid);
@@ -445,11 +469,12 @@ export async function buildRanking(deps, viewer, ctx, id, seed, refresh) {
         if (again.length) {
             for (const p of again)
                 rank.set(p.id, 1000 + served.get(p.id).lastRefresh);
-            ordered = ordered.concat(orderSample(again, viewer, ctx, cfg, rng, p => served.get(p.id).lastRefresh));
+            const sampled = orderSample(again, viewer, ctx, cfg, rng, p => served.get(p.id).lastRefresh);
+            tiers.push(sampled);
             tier = "reshown";
         }
     }
-    const diversified = diversify(ordered, cfg.maxPerAuthor, cfg.diversityWindow);
+    const diversified = diversifyTiers(tiers, cfg);
     const order = diversified.order.slice(0, cfg.maxOrder);
     const relaxedFrom = diversified.relaxedFrom !== null && diversified.relaxedFrom < order.length
         ? diversified.relaxedFrom
@@ -488,9 +513,12 @@ export async function advanceSession(deps, from, viewer, ctx) {
 // Throws, serving nothing, if authoritative state or the store is unavailable or conflicts.
 export async function nextPage(deps, s, viewer, ctx, pageSize) {
     assertOwner(s, viewer);
+    if (!Number.isInteger(pageSize) || pageSize <= 0) {
+        throw new RangeError("pageSize must be a positive integer");
+    }
     const { authority, store, cfg } = deps;
     const policy = await authority.viewer(viewer.id);
-    const allow = deps.gate({ id: viewer.id, ...policy }, ctx);
+    const allow = deps.gate({ ...policy, id: viewer.id }, ctx);
     const picked = [];
     let cursor = s.cursor;
     let scanned = 0;
@@ -559,7 +587,7 @@ export async function rebuildTail(deps, s, viewer, ctx, policy) {
         return false;
     const { authority, store, cfg } = deps;
     const pol = policy ?? (await authority.viewer(viewer.id));
-    const allow = deps.gate({ id: viewer.id, ...pol }, ctx);
+    const allow = deps.gate({ ...pol, id: viewer.id }, ctx);
     const auth = await authority.posts(rest.map(e => e.id));
     const records = admissible(rest.flatMap(e => auth.get(e.id) ?? []), allow);
     const rank = new Map(rest.map(e => [e.id, e.rank]));
@@ -571,8 +599,21 @@ export async function rebuildTail(deps, s, viewer, ctx, policy) {
     const ordered = firstOld === -1
         ? withLocalShare(sampled, v.regionId, share)
         : withLocalShare(sampled.slice(0, firstOld), v.regionId, share).concat(sampled.slice(firstOld));
+    // Keep tier order: a rank-1 recycled item must never be pulled ahead of a rank-0 fresh one.
+    const grouped = new Map();
+    for (const p of ordered) {
+        const r = rank.get(p.id);
+        const list = grouped.get(r);
+        if (list)
+            list.push(p);
+        else
+            grouped.set(r, [p]);
+    }
+    const tiers = [...grouped.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .map(([, list]) => list);
     const served = s.order.slice(0, s.cursor);
-    const redo = diversify(ordered, cfg.maxPerAuthor, cfg.diversityWindow, served.map(e => e.authorId));
+    const redo = diversifyTiers(tiers, cfg, served.map(e => e.authorId));
     const next = {
         ...s,
         rev: s.rev + 1,
@@ -602,7 +643,21 @@ const qualifies = (e, cfg) => e.visibleMs >= cfg.view.minVisibleMs && e.visibleF
 //
 // A receipt is consumed even when its claim is judged implausible: a retry cannot rescue it.
 // Nothing is mutated unless the store commit succeeds, so a failed call can be retried.
+const VIEW_COMMIT_ATTEMPTS = 3;
 export async function recordViews(deps, s, viewer, events, receivedAt) {
+    for (let attempt = 0;; attempt++) {
+        try {
+            return await recordViewsOnce(deps, s, viewer, events, receivedAt);
+        }
+        catch (err) {
+            if (!(err instanceof StoreConflict) || attempt >= VIEW_COMMIT_ATTEMPTS - 1)
+                throw err;
+            // The winning call changed spent time and/or receipts. Re-read both before retrying.
+            await new Promise(resolve => setTimeout(resolve, 2 ** attempt));
+        }
+    }
+}
+async function recordViewsOnce(deps, s, viewer, events, receivedAt) {
     const { cfg, store } = deps;
     const rejected = {};
     const reject = (r) => { rejected[r] = (rejected[r] ?? 0) + 1; };
@@ -649,7 +704,9 @@ export async function recordViews(deps, s, viewer, events, receivedAt) {
     const postsInBatch = new Set();
     for (const { e, r, serveId } of pending) {
         const elapsed = receivedAt - r.servedAt;
-        const sane = Number.isFinite(e.visibleMs) &&
+        const sane = Number.isFinite(receivedAt) &&
+            elapsed >= 0 &&
+            Number.isFinite(e.visibleMs) &&
             e.visibleMs >= 0 &&
             e.visibleMs <= elapsed + cfg.view.slackMs &&
             Number.isFinite(e.visibleFraction) &&
